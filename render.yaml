@@ -1,0 +1,64 @@
+# Render Blueprint for the Welliva API.
+#
+# Deploy: Render Dashboard → New → Blueprint → pick this repo. Render reads this
+# file from the `main` branch and provisions the service below, prompting for the
+# secrets marked `sync: false` (those are NEVER stored in git).
+#
+# Docs: https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: welliva-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    region: oregon
+    branch: main
+    autoDeploy: true
+
+    # /health is unauthenticated on purpose (see routes.ts) so Render's probe
+    # doesn't need a Supabase token.
+    healthCheckPath: /health
+
+    envVars:
+      # Must match `EXPOSE 8787` in the Dockerfile. Render would otherwise inject
+      # its own PORT (10000) while routing to the EXPOSEd port, and the health
+      # check would never pass. Pinning both to 8787 removes the ambiguity.
+      - key: PORT
+        value: 8787
+
+      - key: NODE_ENV
+        value: production
+
+      # ── Secrets: Render prompts for these on first deploy ──
+      # The entire reason this backend exists is to keep this off the device.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      # Same value as the app's EXPO_PUBLIC_SUPABASE_URL. The server refuses to
+      # boot without it, and it's the expected token issuer — so a token from
+      # some other Supabase project is rejected.
+      - key: SUPABASE_URL
+        sync: false
+
+      # SUPABASE_JWT_SECRET is deliberately absent. Welliva's project signs
+      # asymmetrically (its JWKS returns an ES256 key), so auth.ts uses the
+      # public JWKS automatically. Only add this in the dashboard if the project
+      # is ever migrated back to legacy HS256.
+
+      # Haiku-locked in config.ts regardless; this just pins the alias.
+      - key: CLAUDE_MODEL
+        value: claude-haiku-4-5
+
+      - key: RATE_LIMIT_MAX
+        value: 20
+      - key: RATE_LIMIT_WINDOW_MS
+        value: 60000
+      - key: RATE_LIMIT_DAILY_MAX
+        value: 300
+
+      # The native app sends no Origin header, so CORS never gates it — the JWT
+      # check in auth.ts is the real boundary. Narrow this to your web origin(s)
+      # if you ever serve Welliva in a browser.
+      - key: CORS_ORIGIN
+        value: "*"

@@ -1,0 +1,17 @@
+# Keep the build context minimal and secret-free.
+#
+# On Render the context is the git checkout, so .env is already absent (it's
+# gitignored). This file is what stops a LOCAL `docker build` from sweeping your
+# real .env and host node_modules into the context.
+
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+.git/
+.gitignore
+*.log
+*.tsbuildinfo
+README.md
+render.yaml
