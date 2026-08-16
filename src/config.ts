@@ -28,18 +28,48 @@ function intFromEnv(name: string, fallback: number): number {
 const requestedModel = (process.env.CLAUDE_MODEL ?? "").trim() || "claude-haiku-4-5";
 
 /**
- * HARD PRODUCT REQUIREMENT — this backend runs on Claude Haiku ONLY.
+ * HARD PRODUCT REQUIREMENT — the model is chosen by the SERVER, per task.
  *
- * Any non-Haiku model id (from env, a request, or anywhere) is ignored and
- * forced back to the Haiku alias. The model is never read from a request body,
- * so callers can never escalate to a pricier model.
+ * Previously this was a single global Haiku lock. That was the right shape when
+ * every endpoint was a stateless one-shot generator, and the wrong shape once
+ * coaching became a tool-using agent loop: tool orchestration and clinical
+ * judgement are exactly where the model-tier gap shows.
+ *
+ * So it's a routing table now, not a switch. The invariant that actually
+ * mattered is preserved and strengthened: the model is NEVER read from a
+ * request body, and every id below is a compile-time constant, so no caller can
+ * escalate to a pricier model.
+ *
+ * Split by TASK, never by turn. Prompt caches are model-scoped, so swapping
+ * models mid-conversation dumps the entire cache and costs more than it saves.
  */
-export const CLAUDE_MODEL = requestedModel.startsWith("claude-haiku")
-  ? requestedModel
-  : "claude-haiku-4-5";
+export const MODELS = {
+  /**
+   * The Gozlin coaching agent loop. Opus 5 at low effort — it is unusually
+   * strong at `low`, which keeps mobile latency tolerable while still
+   * orchestrating tools reliably.
+   */
+  coach: "claude-opus-5",
+  /**
+   * Depth work that isn't latency-bound: plan generation, long-form review.
+   * Same model as `coach` on purpose — one cache scope for the heavy path.
+   */
+  deep: "claude-opus-5",
+  /**
+   * Stateless side-tasks (food-text parsing). No conversation, no cache to
+   * thrash, and latency here sits in front of someone typing.
+   */
+  utility: requestedModel.startsWith("claude-haiku") ? requestedModel : "claude-haiku-4-5",
+} as const;
 
-/** True when the env asked for a non-Haiku model and we overrode it. */
-export const MODEL_WAS_FORCED = requestedModel !== CLAUDE_MODEL;
+/**
+ * Back-compat alias. The pre-existing diet/workout/coach-chat endpoints all
+ * mean "the cheap stateless model" when they say CLAUDE_MODEL.
+ */
+export const CLAUDE_MODEL = MODELS.utility;
+
+/** True when the env asked for a non-Haiku utility model and we overrode it. */
+export const MODEL_WAS_FORCED = requestedModel !== MODELS.utility;
 
 /** Supabase project URL, e.g. https://abcd1234.supabase.co (no trailing slash). */
 const supabaseUrl = required("SUPABASE_URL").replace(/\/+$/, "");
@@ -62,6 +92,17 @@ export const config = {
    * leave this unset for those and the JWKS endpoint is used automatically.
    */
   supabaseJwtSecret: optional("SUPABASE_JWT_SECRET"),
+
+  /**
+   * USDA FoodData Central key (free: https://fdc.nal.usda.gov/api-key-signup.html).
+   *
+   * Server-side only — it must never reach the client, which is the whole
+   * reason food lookup runs here rather than in the app. Optional so an
+   * existing deployment still boots without it, but /v1/nutrition/lookup then
+   * has no measured source to try and falls back to AI estimates for
+   * everything, which is a much weaker feature. Set it.
+   */
+  fdcApiKey: optional("FDC_API_KEY"),
 
   /** Burst limit: requests per user per short window. */
   rateLimitMax: intFromEnv("RATE_LIMIT_MAX", 20),

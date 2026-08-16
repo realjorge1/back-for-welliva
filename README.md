@@ -144,6 +144,68 @@ only the user's real numbers; the model may use **only** those facts.
 // → { "reply": "...", "model": "claude-haiku-4-5" }
 ```
 
+### `POST /v1/nutrition/parse`
+Parses free text into `{quantity, unit, food}` and **nothing else** — no
+calories, no macros. The app resolves nutrition itself from cited reference
+data. The tool schema and the zod schema both forbid extra keys, so a model
+that ignores the prompt still can't get a nutrient across the boundary.
+
+### `POST /v1/nutrition/lookup`
+Finds a food the app's catalog doesn't have. **Free for every signed-in user** —
+it's the fallback when someone searches a food we don't ship, so gating it would
+gate the catalog itself.
+
+```jsonc
+// request
+{ "query": "abacha", "region": "Nigeria" }   // region optional, a hint not a filter
+// response
+{ "results": [ { "name": "Abacha (African salad)", "serving": "1 cup",
+                 "servingGrams": 200, "group": "Grains & Starches",
+                 "nutrients": { "calories": 320, "carbs": 52, "protein": 8 },
+                 "origin": "ai-estimate", "model": "claude-haiku-4-5",
+                 "description": "shredded cassava fried in palm oil…",
+                 "isRegional": true } ],
+  "resolvedBy": "ai-estimate" }
+```
+
+**This is the only endpoint that may return nutrition figures**, which makes the
+rule it operates under worth stating plainly:
+
+> A number in a NutrientPanel must trace back to a measured source. Nothing in
+> one is ever produced by a language model.
+
+The exception is bounded, not waived — three things keep it honest:
+
+1. **Measured first.** USDA FoodData Central is always tried; if it has the
+   food, the model is never called. `resolvedBy: "usda"`, with a real `fdcId`
+   the user can look up.
+2. **An estimate is never dressed as a measurement.** It returns
+   `origin: "ai-estimate"` plus the model id, and the app carries that tag on
+   its weakest confidence rung — labelled on the food, on the day's totals and
+   in the end-of-period report, permanently.
+3. **`origin` and `fdcId` are set by the server, never by the model.** The
+   estimate schema has no field for either, and zod strips unknown keys, so a
+   model claiming `origin: "usda"` cannot be believed — the key is gone before
+   the code sees it. Reporting "usda" for a model's figure is the one failure
+   this design exists to prevent.
+
+Zero results is a successful answer: `{ "results": [], "resolvedBy": "none" }`
+with a 200. Inventing a food to avoid an empty list would defeat the point.
+
+Other behaviour worth knowing:
+
+- Unknown nutrients are **omitted, never zeroed** — the app renders a missing
+  key as `—` and a `0` as a measured zero.
+- General foods (Foundation, SR Legacy) outrank Branded. This needs two
+  searches, not one: for "cheddar cheese" every hit on FDC's first page is a
+  manufacturer's product, and the canonical entry is nowhere near it.
+- USDA responses are cached in-process for a week, keyed on the normalised
+  query. The default key allows 1,000 requests/hour.
+- If USDA is unreachable, the lookup falls through to an estimate rather than
+  failing — degraded, but still correctly labelled.
+- Requires `FDC_API_KEY` (see `.env.example`). Without it the measured rung is
+  skipped entirely and everything comes back as an estimate.
+
 ## How generation works
 
 Diet and workout use **forced tool-use** (`tool_choice` → a single emit tool)
@@ -155,7 +217,7 @@ offline fallback, so the app never breaks when the API is unreachable.
 
 ## Deploy notes
 
-- Set `ANTHROPIC_API_KEY`, `PORT`, and `CORS_ORIGIN` (lock CORS to your app's
-  origin in production instead of `*`).
+- Set `ANTHROPIC_API_KEY`, `FDC_API_KEY`, `PORT`, and `CORS_ORIGIN` (lock CORS
+  to your app's origin in production instead of `*`).
 - Point the app at it with `EXPO_PUBLIC_API_URL` (see the app's `.env.example`).
 - This is a normal Node/Express service — any platform that runs Node ≥ 18 works.

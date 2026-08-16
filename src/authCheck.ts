@@ -42,22 +42,22 @@ function record(ok: boolean, label: string, detail: string) {
   console.log(`${ok ? "PASS" : "FAIL"}  ${label.padEnd(34)} → ${detail}`);
 }
 
-async function call(token: string | null) {
-  const res = await fetch(`${BASE}/v1/coach/chat`, {
+async function call(token: string | null, path = "/v1/coach/chat", body: unknown = { user: "hi" }) {
+  const res = await fetch(`${BASE}${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    body: JSON.stringify({ user: "hi" }),
+    body: JSON.stringify(body),
   });
-  const body = (await res.json().catch(() => ({}))) as { error?: { code?: string } };
-  return { status: res.status, code: body.error?.code, headers: res.headers };
+  const parsed = (await res.json().catch(() => ({}))) as { error?: { code?: string } };
+  return { status: res.status, code: parsed.error?.code, headers: res.headers };
 }
 
 /** Assert a token is refused with 401 unauthorized. */
-async function mustReject(label: string, token: string | null) {
-  const { status, code } = await call(token);
+async function mustReject(label: string, token: string | null, path?: string, body?: unknown) {
+  const { status, code } = await call(token, path, body);
   record(status === 401 && code === "unauthorized", label, `${status} ${code ?? "ok"}`);
 }
 
@@ -102,6 +102,19 @@ await mustReject(
   await mint({ sub: "u1", role: "authenticated" }, { iss: "https://other.supabase.co/auth/v1" }),
 );
 await mustReject("expired token", await mint({ sub: "u1", role: "authenticated" }, { exp: "-5m" }));
+
+// The gate is applied to the whole /v1 prefix rather than route by route, so a
+// new endpoint is protected by default. Spot-check the newest one anyway: it is
+// the only route that returns nutrition figures, and "we added it under the
+// right prefix" is exactly the kind of thing that stops being true silently.
+const LOOKUP = "/v1/nutrition/lookup";
+await mustReject("no token on nutrition/lookup", null, LOOKUP, { query: "abacha" });
+await mustReject(
+  "role=anon on nutrition/lookup",
+  await mint({ sub: "u1", role: "anon" }),
+  LOOKUP,
+  { query: "abacha" },
+);
 
 // A genuine user token must get PAST the gate. It then fails at Anthropic with
 // the fake key — so "not 401/unauthorized" is what proves the gate opened.

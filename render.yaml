@@ -41,6 +41,13 @@ services:
       - key: SUPABASE_URL
         sync: false
 
+      # USDA FoodData Central key for /v1/nutrition/lookup (free, instant:
+      # https://fdc.nal.usda.gov/api-key-signup.html). Server-side only — the
+      # app never sees it. Without it the endpoint has no measured source to
+      # try and answers with AI estimates for everything.
+      - key: FDC_API_KEY
+        sync: false
+
       # SUPABASE_JWT_SECRET is deliberately absent. Welliva's project signs
       # asymmetrically (its JWKS returns an ES256 key), so auth.ts uses the
       # public JWKS automatically. Only add this in the dashboard if the project

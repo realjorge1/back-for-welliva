@@ -12,4 +12,10 @@ app.listen(config.port, () => {
       "A non-Haiku CLAUDE_MODEL was configured and IGNORED. This backend is Haiku-only by design.",
     );
   }
+  if (!config.fdcApiKey) {
+    log.warn(
+      "FDC_API_KEY is not set. /v1/nutrition/lookup will skip USDA FoodData Central " +
+        "and answer with AI estimates only. Free key: https://fdc.nal.usda.gov/api-key-signup.html",
+    );
+  }
 });
